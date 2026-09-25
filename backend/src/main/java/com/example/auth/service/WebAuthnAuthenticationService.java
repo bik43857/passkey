@@ -20,6 +20,7 @@ import com.webauthn4j.server.ServerProperty;
 import com.webauthn4j.util.Base64UrlUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.hibernate.Hibernate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -158,6 +159,18 @@ public class WebAuthnAuthenticationService {
         credentialRepository.save(credential);
 
         User user = credential.getUser();
+        // credential.getUser() is a lazy (@ManyToOne LAZY) proxy that has
+        // never had a field touched on it in this method — .getId() above
+        // reads straight off the proxy without triggering a DB fetch, so
+        // the proxy is still uninitialized at this point. With
+        // spring.jpa.open-in-view: false (deliberately set — see
+        // application.yml), the Hibernate Session closes the instant this
+        // @Transactional method returns, so anything that later calls a
+        // real getter (UserResponse.from() -> user.getName()) throws
+        // LazyInitializationException. Force it to load now, while the
+        // Session is still open, so the returned User is safe to read from
+        // anywhere afterwards.
+        Hibernate.initialize(user);
         sessionService.createSession(user, httpRequest, httpResponse);
         auditService.record(user.getId(), "LOGIN_SUCCESS_PASSKEY", httpRequest, credential.getDeviceName());
 
